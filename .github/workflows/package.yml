@@ -36,7 +36,7 @@ jobs:
 
       - name: Create .iinaplgz package
         run: |
-          PLUGIN_DIR="com.lss.subtitle-browser.iinaplugin"
+          PLUGIN_DIR="subtitle-browser.iinaplugin"
           VERSION="${{ steps.version.outputs.version }}"
           PKG_NAME="${PLUGIN_DIR}-${VERSION}.iinaplgz"
 
