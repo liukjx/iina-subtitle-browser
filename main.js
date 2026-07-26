@@ -162,28 +162,28 @@ function readAndDisplaySubtitle(filepath) {
 }
 
 function autoScanAndLoad() {
-  // Get the current media file path from mpv
-  let mediaPath;
-  try {
-    mediaPath = mpv.getString('file-path');
-  } catch (e) {
-    console.log('[SubtitleBrowser] get file-path error: ' + e);
+  // Try multiple mpv properties to get the current media file path
+  let mediaPath = getMediaFilePath();
+
+  if (!mediaPath) {
+    // Dump debug info
+    logDebugInfo();
+    return;
   }
 
   // Skip auto-scan for network streams
-  if (!mediaPath ||
-      mediaPath.startsWith('http://') ||
+  if (mediaPath.startsWith('http://') ||
       mediaPath.startsWith('https://') ||
       mediaPath.startsWith('rtmp://') ||
       mediaPath.startsWith('rtsp://')) {
-    sidebar.postMessage('subtitles', { entries: [], error: '请先加载字幕文件' });
+    sidebar.postMessage('subtitles', { entries: [], error: '不支持网络串流 (auto-scan)' });
     return;
   }
 
   // Get directory and basename
   const sepIdx = Math.max(mediaPath.lastIndexOf('/'), mediaPath.lastIndexOf('\\'));
   if (sepIdx === -1) {
-    sidebar.postMessage('subtitles', { entries: [], error: '请先加载字幕文件' });
+    sidebar.postMessage('subtitles', { entries: [], error: '路径异常: ' + mediaPath.substring(0, 60) });
     return;
   }
   const dirPath = mediaPath.substring(0, sepIdx);
@@ -202,7 +202,7 @@ function autoScanAndLoad() {
         mpv.command('sub-add', [candidatePath]);
       } catch (e) {
         console.log('[SubtitleBrowser] sub-add error: ' + e);
-        sidebar.postMessage('subtitles', { entries: [], error: '自动加载字幕失败' });
+        sidebar.postMessage('subtitles', { entries: [], error: '加载失败: ' + (e.message || e) });
         return;
       }
 
@@ -214,7 +214,56 @@ function autoScanAndLoad() {
     }
   }
 
-  sidebar.postMessage('subtitles', { entries: [], error: '未找到同名字幕文件 (.srt/.ass/.vtt)' });
+  // Not found — show what we looked for
+  sidebar.postMessage('subtitles', {
+    entries: [],
+    error: '未找到: ' + nameWithoutExt + '(.srt|.ass|.vtt) — 文件: ' + filename
+  });
+}
+
+function getMediaFilePath() {
+  // Try multiple mpv properties in order of reliability
+  const props = ['file-path', 'path', 'filename'];
+  for (const prop of props) {
+    try {
+      let val;
+      if (prop === 'filename' || prop === 'path') {
+        val = mpv.getString(prop);
+      } else {
+        val = mpv.getString(prop);
+      }
+      if (val) {
+        // For 'filename', try to combine with working-directory
+        if (prop === 'filename' && !val.includes('/')) {
+          try {
+            const wd = mpv.getString('working-directory');
+            if (wd) {
+              val = wd + '/' + val;
+            }
+          } catch (e) {}
+        }
+        console.log('[SubtitleBrowser] media path: ' + val + ' (from ' + prop + ')');
+        return val;
+      }
+    } catch (e) {}
+  }
+  return null;
+}
+
+function logDebugInfo() {
+  const info = [];
+  const props = ['file-path', 'path', 'filename', 'working-directory', 'media-title'];
+  for (const prop of props) {
+    try {
+      const val = mpv.getString(prop);
+      info.push(prop + '=' + (val || '(null)'));
+    } catch (e) {
+      info.push(prop + '=ERR:' + (e.message || e));
+    }
+  }
+  const msg = '无法获取文件路径。mpv属性: ' + info.join('; ');
+  console.log('[SubtitleBrowser] ' + msg);
+  sidebar.postMessage('subtitles', { entries: [], error: msg });
 }
 
 // ---- Sync ----
