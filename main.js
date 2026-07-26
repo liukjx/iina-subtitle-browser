@@ -9,6 +9,9 @@ let subtitleFile = null;
 let currentIndex = -1;
 let syncTimer = null;
 
+// Supported subtitle extensions for auto-scan
+const SUB_EXTENSIONS = ['.srt', '.ass', '.ssa', '.vtt'];
+
 // ---- SRT Parser ----
 function parseSRT(content) {
   const entries = [];
@@ -120,18 +123,26 @@ function getSelectedSubtitleTrack() {
 function loadAndSendSubtitles() {
   subtitles = [];
   subtitleFile = null;
+  stopSync();
+
   const track = getSelectedSubtitleTrack();
-  if (!track) {
-    console.log('[SubtitleBrowser] No subtitle track');
-    sidebar.postMessage('subtitles', { entries: [], error: '请先加载字幕文件' });
+  if (track) {
+    // IINA already has a subtitle track selected
+    if (!track.external || !track['external-filename']) {
+      console.log('[SubtitleBrowser] Not external subtitle');
+      sidebar.postMessage('subtitles', { entries: [], error: '暂不支持内嵌字幕，请使用外挂字幕 (.srt/.ass/.vtt)' });
+      return;
+    }
+    readAndDisplaySubtitle(track['external-filename']);
     return;
   }
-  if (!track.external || !track['external-filename']) {
-    console.log('[SubtitleBrowser] Not external subtitle');
-    sidebar.postMessage('subtitles', { entries: [], error: '暂不支持内嵌字幕，请使用外挂字幕 (.srt/.ass/.vtt)' });
-    return;
-  }
-  const filepath = track['external-filename'];
+
+  // No subtitle track selected — try auto-scan
+  console.log('[SubtitleBrowser] No subtitle track, trying auto-scan');
+  autoScanAndLoad();
+}
+
+function readAndDisplaySubtitle(filepath) {
   if (!file.exists(filepath)) {
     console.log('[SubtitleBrowser] File not found: ' + filepath);
     sidebar.postMessage('subtitles', { entries: [], error: '字幕文件不存在' });
@@ -143,10 +154,101 @@ function loadAndSendSubtitles() {
     subtitleFile = filepath;
     console.log('[SubtitleBrowser] Loaded ' + subtitles.length + ' subs from ' + filepath);
     sidebar.postMessage('subtitles', { entries: subtitles });
+    startSync();
   } catch (e) {
     console.log('[SubtitleBrowser] Read error: ' + e);
     sidebar.postMessage('subtitles', { entries: [], error: '读取失败: ' + e });
   }
+}
+
+function autoScanAndLoad() {
+  // Get the current media file path from mpv
+  let mediaPath;
+  try {
+    mediaPath = mpv.getString('file-path');
+  } catch (e) {
+    console.log('[SubtitleBrowser] get file-path error: ' + e);
+  }
+
+  // Skip auto-scan for network streams
+  if (!mediaPath ||
+      mediaPath.startsWith('http://') ||
+      mediaPath.startsWith('https://') ||
+      mediaPath.startsWith('rtmp://') ||
+      mediaPath.startsWith('rtsp://')) {
+    sidebar.postMessage('subtitles', { entries: [], error: '请先加载字幕文件' });
+    return;
+  }
+
+  // Get directory and basename
+  const sepIdx = Math.max(mediaPath.lastIndexOf('/'), mediaPath.lastIndexOf('\\'));
+  if (sepIdx === -1) {
+    sidebar.postMessage('subtitles', { entries: [], error: '请先加载字幕文件' });
+    return;
+  }
+  const dirPath = mediaPath.substring(0, sepIdx);
+  const filename = mediaPath.substring(sepIdx + 1);
+  const dotIdx = filename.lastIndexOf('.');
+  const nameWithoutExt = dotIdx !== -1 ? filename.substring(0, dotIdx) : filename;
+
+  // List files in the same directory
+  let files;
+  try {
+    files = file.list(dirPath, {});
+  } catch (e) {
+    console.log('[SubtitleBrowser] file.list error: ' + e);
+    sidebar.postMessage('subtitles', { entries: [], error: '无法扫描字幕目录' });
+    return;
+  }
+
+  if (!files || files.length === 0) {
+    sidebar.postMessage('subtitles', { entries: [], error: '未找到字幕文件' });
+    return;
+  }
+
+  // Find and score subtitle files
+  const candidates = [];
+  for (const f of files) {
+    if (f.isDir) continue;
+    const lower = f.filename.toLowerCase();
+    for (const ext of SUB_EXTENSIONS) {
+      if (lower.endsWith(ext)) {
+        const cBase = f.filename.substring(0, f.filename.lastIndexOf('.'));
+        let score = 0;
+        if (cBase.toLowerCase() === nameWithoutExt.toLowerCase()) {
+          score = 2; // Exact match: 01标题.mp3 + 01标题.srt
+        } else if (cBase.toLowerCase().startsWith(nameWithoutExt.toLowerCase())) {
+          score = 1; // Prefix match: 01标题 + 01标题_双语.srt
+        }
+        candidates.push({ filename: f.filename, fullPath: dirPath + f.path, score });
+        break;
+      }
+    }
+  }
+
+  if (candidates.length === 0) {
+    sidebar.postMessage('subtitles', { entries: [], error: '未找到 .srt/.ass/.vtt 字幕文件' });
+    return;
+  }
+
+  // Pick the best match (highest score, then alphabetically)
+  candidates.sort((a, b) => b.score - a.score || a.filename.localeCompare(b.filename));
+  const best = candidates[0];
+  console.log('[SubtitleBrowser] Auto-loading: ' + best.filename);
+
+  // Load subtitle via mpv command
+  try {
+    mpv.command('sub-add', [best.fullPath]);
+  } catch (e) {
+    console.log('[SubtitleBrowser] sub-add error: ' + e);
+    sidebar.postMessage('subtitles', { entries: [], error: '自动加载字幕失败' });
+    return;
+  }
+
+  // Give mpv a moment to register the track, then read & parse
+  setTimeout(() => {
+    readAndDisplaySubtitle(best.fullPath);
+  }, 300);
 }
 
 // ---- Sync ----
@@ -187,25 +289,23 @@ event.on('iina.window-loaded', () => {
   sidebar.onMessage('loaded', () => {
     console.log('[SubtitleBrowser] sidebar HTML says it loaded');
     loadAndSendSubtitles();
-    startSync();
   });
 
   // Also try to load subtitles after a delay
   setTimeout(() => {
     loadAndSendSubtitles();
-    startSync();
   }, 1000);
 });
 
 // Reload on video file load
 event.on('mpv.file-loaded', () => {
   console.log('[SubtitleBrowser] mpv.file-loaded');
-  setTimeout(() => { loadAndSendSubtitles(); startSync(); }, 800);
+  setTimeout(() => { loadAndSendSubtitles(); }, 800);
 });
 
 event.on('iina.file-loaded', () => {
   console.log('[SubtitleBrowser] iina.file-loaded');
-  setTimeout(() => { loadAndSendSubtitles(); startSync(); }, 1000);
+  setTimeout(() => { loadAndSendSubtitles(); }, 1000);
 });
 
 console.log('[SubtitleBrowser] Plugin initialized');

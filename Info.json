@@ -1,19 +1,21 @@
 {
-  "name": "字幕浏览器",
+  "name": "\u5b57\u5e55\u6d4f\u89c8\u5668",
   "identifier": "com.lss.subtitle-browser",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "author": {
-    "name": "栗少",
+    "name": "\u6817\u5c11",
     "email": ""
   },
-  "description": "在侧边栏显示所有字幕行及时间戳，点击可跳转播放，类似 PotPlayer 的字幕浏览器",
+  "description": "\u5728\u4fa7\u8fb9\u680f\u663e\u793a\u6240\u6709\u5b57\u5e55\u884c\u53ca\u65f6\u95f4\u6233\uff0c\u70b9\u51fb\u53ef\u8df3\u8f6c\u64ad\u653e\uff0c\u7c7b\u4f3c PotPlayer \u7684\u5b57\u5e55\u6d4f\u89c8\u5668",
   "entry": "main.js",
   "sidebarTab": {
-    "name": "字幕浏览器"
+    "name": "\u5b57\u5e55\u6d4f\u89c8\u5668"
   },
   "permissions": [
     "file-system",
     "show-osd"
   ],
-  "allowedDomains": ["*"]
+  "allowedDomains": [
+    "*"
+  ]
 }
