@@ -1,0 +1,19 @@
+{
+  "name": "字幕浏览器",
+  "identifier": "com.lss.subtitle-browser",
+  "version": "1.0.1",
+  "author": {
+    "name": "栗少",
+    "email": ""
+  },
+  "description": "在侧边栏显示所有字幕行及时间戳，点击可跳转播放，类似 PotPlayer 的字幕浏览器",
+  "entry": "main.js",
+  "sidebarTab": {
+    "name": "字幕浏览器"
+  },
+  "permissions": [
+    "file-system",
+    "show-osd"
+  ],
+  "allowedDomains": ["*"]
+}

@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>字幕浏览器</title>
+<style>
+  :root {
+    --text: #e0e0e0; --text-secondary: #888;
+    --highlight-bg: rgba(255,204,0,0.25); --highlight-text: #ffcc00;
+    --hover-bg: rgba(255,255,255,0.06); --border: rgba(255,255,255,0.1);
+    --scrollbar-thumb: rgba(255,255,255,0.2); --error: #ff6b6b;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --text: #333; --text-secondary: #999;
+      --highlight-bg: rgba(255,180,0,0.2); --highlight-text: #b8860b;
+      --hover-bg: rgba(0,0,0,0.04); --border: rgba(0,0,0,0.1);
+      --scrollbar-thumb: rgba(0,0,0,0.2); --error: #d32f2f;
+    }
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;
+    font-size:13px; line-height:1.5; color:var(--text);
+    background:transparent; overflow:hidden; height:100vh;
+    display:flex; flex-direction:column; user-select:none;
+    padding: 8px;
+  }
+  .header { padding:4px 4px 8px; border-bottom:1px solid var(--border); flex-shrink:0; }
+  .header-title { font-size:12px; font-weight:600; color:var(--text-secondary); text-transform:uppercase; letter-spacing:.5px; }
+  .header-stats { font-size:11px; color:var(--text-secondary); margin-top:2px; }
+  .error-msg { padding:16px 4px; color:var(--error); font-size:13px; text-align:center; }
+  .sub-list { flex:1; overflow-y:auto; overflow-x:hidden; }
+  .sub-list::-webkit-scrollbar { width:5px; }
+  .sub-list::-webkit-scrollbar-track { background:transparent; }
+  .sub-list::-webkit-scrollbar-thumb { background:var(--scrollbar-thumb); border-radius:3px; }
+  .sub-item {
+    padding:6px 8px; cursor:pointer; border-left:3px solid transparent;
+    transition:background .15s,border-color .15s; display:flex; gap:10px;
+    align-items:flex-start; border-radius:2px;
+  }
+  .sub-item:hover { background:var(--hover-bg); }
+  .sub-item.active { background:var(--highlight-bg); border-left-color:var(--highlight-text); }
+  .sub-time {
+    font-size:11px; color:var(--text-secondary); white-space:nowrap;
+    min-width:48px; padding-top:1px; font-variant-numeric:tabular-nums;
+  }
+  .sub-item.active .sub-time { color:var(--highlight-text); font-weight:600; }
+  .sub-text { flex:1; word-break:break-word; white-space:pre-wrap; }
+  .sub-item.active .sub-text { font-weight:500; }
+  .count-badge {
+    display:inline-block; background:var(--highlight-bg); color:var(--highlight-text);
+    font-size:10px; padding:1px 6px; border-radius:8px; font-weight:600;
+  }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="header-title">字幕浏览器</div>
+  <div class="header-stats" id="stats"></div>
+</div>
+<div class="sub-list" id="list"></div>
+
+<script>
+(function() {
+  var listEl = document.getElementById('list');
+  var statsEl = document.getElementById('stats');
+  var entries = [];
+  var currentIdx = -1;
+  var activeEl = null;
+
+  // ---- Receive subtitles ----
+  iina.onMessage('subtitles', function(data) {
+    entries = data.entries || [];
+    if (data.error) {
+      listEl.innerHTML = '<div class="error-msg">&#9888; ' + escapeHtml(data.error) + '</div>';
+      statsEl.textContent = '';
+      return;
+    }
+    statsEl.innerHTML = entries.length > 0
+      ? '共 <span class="count-badge">' + entries.length + '</span> 条'
+      : '无字幕';
+    renderList();
+  });
+
+  // ---- Receive current position ----
+  iina.onMessage('current', function(data) {
+    if (data.index !== currentIdx) {
+      currentIdx = data.index;
+      updateActive();
+    }
+  });
+
+  // ---- Render ----
+  function renderList() {
+    listEl.innerHTML = '';
+    if (!entries.length) {
+      listEl.innerHTML = '<div class="error-msg">暂无字幕</div>';
+      return;
+    }
+    var frag = document.createDocumentFragment();
+    for (var i = 0; i < entries.length; i++) {
+      var entry = entries[i];
+      var div = document.createElement('div');
+      div.className = 'sub-item';
+      div.setAttribute('data-idx', i);
+      div.innerHTML = '<span class="sub-time">' + escapeHtml(entry.startDisplay) + '</span>'
+        + '<span class="sub-text">' + escapeHtml(entry.text) + '</span>';
+      div.addEventListener('click', makeClickHandler(i, entry.start));
+      frag.appendChild(div);
+    }
+    listEl.appendChild(frag);
+  }
+
+  function makeClickHandler(idx, time) {
+    return function() {
+      setActive(idx);
+      iina.postMessage('seek', { time: time, index: idx });
+    };
+  }
+
+  function setActive(idx) {
+    if (activeEl) { activeEl.classList.remove('active'); }
+    currentIdx = idx;
+    var item = listEl.querySelector('[data-idx="' + idx + '"]');
+    if (item) {
+      item.classList.add('active');
+      activeEl = item;
+      item.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }
+
+  function updateActive() {
+    if (activeEl) { activeEl.classList.remove('active'); activeEl = null; }
+    if (currentIdx >= 0 && currentIdx < entries.length) {
+      var item = listEl.querySelector('[data-idx="' + currentIdx + '"]');
+      if (item) {
+        item.classList.add('active');
+        activeEl = item;
+        item.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+    }
+  }
+
+  function escapeHtml(str) {
+    var div = document.createElement('div');
+    div.appendChild(document.createTextNode(str));
+    return div.innerHTML;
+  }
+
+  // Tell plugin we're ready
+  iina.postMessage('loaded', {});
+})();
+</script>
+</body>
+</html>
