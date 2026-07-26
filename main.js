@@ -191,64 +191,30 @@ function autoScanAndLoad() {
   const dotIdx = filename.lastIndexOf('.');
   const nameWithoutExt = dotIdx !== -1 ? filename.substring(0, dotIdx) : filename;
 
-  // List files in the same directory
-  let files;
-  try {
-    files = file.list(dirPath, {});
-  } catch (e) {
-    console.log('[SubtitleBrowser] file.list error: ' + e);
-    sidebar.postMessage('subtitles', { entries: [], error: '无法扫描字幕目录' });
-    return;
-  }
+  // Try each subtitle extension (file.exists avoids sandbox dir-listing issue)
+  for (const ext of SUB_EXTENSIONS) {
+    const candidatePath = dirPath + '/' + nameWithoutExt + ext;
+    if (file.exists(candidatePath)) {
+      console.log('[SubtitleBrowser] Auto-loading: ' + candidatePath);
 
-  if (!files || files.length === 0) {
-    sidebar.postMessage('subtitles', { entries: [], error: '未找到字幕文件' });
-    return;
-  }
-
-  // Find and score subtitle files
-  const candidates = [];
-  for (const f of files) {
-    if (f.isDir) continue;
-    const lower = f.filename.toLowerCase();
-    for (const ext of SUB_EXTENSIONS) {
-      if (lower.endsWith(ext)) {
-        const cBase = f.filename.substring(0, f.filename.lastIndexOf('.'));
-        let score = 0;
-        if (cBase.toLowerCase() === nameWithoutExt.toLowerCase()) {
-          score = 2; // Exact match: 01标题.mp3 + 01标题.srt
-        } else if (cBase.toLowerCase().startsWith(nameWithoutExt.toLowerCase())) {
-          score = 1; // Prefix match: 01标题 + 01标题_双语.srt
-        }
-        candidates.push({ filename: f.filename, fullPath: dirPath + f.path, score });
-        break;
+      // Load subtitle via mpv command
+      try {
+        mpv.command('sub-add', [candidatePath]);
+      } catch (e) {
+        console.log('[SubtitleBrowser] sub-add error: ' + e);
+        sidebar.postMessage('subtitles', { entries: [], error: '自动加载字幕失败' });
+        return;
       }
+
+      // Give mpv a moment to register the track, then read & parse
+      setTimeout(() => {
+        readAndDisplaySubtitle(candidatePath);
+      }, 300);
+      return;
     }
   }
 
-  if (candidates.length === 0) {
-    sidebar.postMessage('subtitles', { entries: [], error: '未找到 .srt/.ass/.vtt 字幕文件' });
-    return;
-  }
-
-  // Pick the best match (highest score, then alphabetically)
-  candidates.sort((a, b) => b.score - a.score || a.filename.localeCompare(b.filename));
-  const best = candidates[0];
-  console.log('[SubtitleBrowser] Auto-loading: ' + best.filename);
-
-  // Load subtitle via mpv command
-  try {
-    mpv.command('sub-add', [best.fullPath]);
-  } catch (e) {
-    console.log('[SubtitleBrowser] sub-add error: ' + e);
-    sidebar.postMessage('subtitles', { entries: [], error: '自动加载字幕失败' });
-    return;
-  }
-
-  // Give mpv a moment to register the track, then read & parse
-  setTimeout(() => {
-    readAndDisplaySubtitle(best.fullPath);
-  }, 300);
+  sidebar.postMessage('subtitles', { entries: [], error: '未找到同名字幕文件 (.srt/.ass/.vtt)' });
 }
 
 // ---- Sync ----
