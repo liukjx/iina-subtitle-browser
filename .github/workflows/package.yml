@@ -1,0 +1,64 @@
+name: Package IINA Plugin
+
+on:
+  push:
+    tags:
+      - 'v*'
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          VERSION=${TAG#v}
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Tag: $TAG → Version: $VERSION"
+
+      - name: Update version in Info.json
+        run: |
+          echo "Updating Info.json version to ${{ steps.version.outputs.version }}"
+          jq --arg ver "${{ steps.version.outputs.version }}" \
+             '.version = $ver' Info.json > Info.json.tmp && \
+             mv Info.json.tmp Info.json
+          echo "Result:"
+          cat Info.json
+
+      - name: Create .iinaplgz package
+        run: |
+          PLUGIN_DIR="com.lss.subtitle-browser.iinaplugin"
+          VERSION="${{ steps.version.outputs.version }}"
+          PKG_NAME="${PLUGIN_DIR}-${VERSION}.iinaplgz"
+
+          # 复制到临时目录打包（排除 node_modules 和隐藏文件）
+          mkdir -p /tmp/build
+          cp -r . /tmp/build/ 2>/dev/null || true
+          cd /tmp/build
+
+          # 清理不需要的文件
+          rm -rf .git node_modules .github
+          rm -f .gitignore
+
+          # 打包（与 iina-plugin pack 命令一致）
+          zip -ryq "$OLDPWD/$PKG_NAME" . -x 'node_modules/*' -x '.*'
+          echo "Created: $PKG_NAME"
+          ls -lh "$OLDPWD/$PKG_NAME"
+
+      - name: Upload to Release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ./*.iinaplgz
+          tag: ${{ github.ref }}
+          overwrite: true
+          file_glob: true
