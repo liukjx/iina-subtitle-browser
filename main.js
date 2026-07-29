@@ -8,6 +8,7 @@ let subtitles = [];
 let subtitleFile = null;
 let currentIndex = -1;
 let syncTimer = null;
+let isLoadingNewFile = false;
 
 // Supported subtitle extensions for auto-scan
 const SUB_EXTENSIONS = ['.srt', '.ass', '.ssa', '.vtt'];
@@ -119,15 +120,46 @@ function getSelectedSubtitleTrack() {
   return null;
 }
 
+// ---- Clear auto-loaded subtitles before our scan ----
+function clearAutoSubtitles() {
+  try {
+    // Disable all subtitle tracks to prevent IINA's auto-match interference
+    mpv.command('set', 'sub-visibility', 'no');
+    // Remove all external subtitle tracks
+    const tracks = mpv.getNative('track-list');
+    if (tracks && Array.isArray(tracks)) {
+      for (const track of tracks) {
+        if (track.type === 'sub' && track.external && track['external-filename']) {
+          try {
+            mpv.command('sub-remove', [track.id]);
+          } catch (e) {
+            // ignore per-track errors
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.log('[SubtitleBrowser] clear subtitles error: ' + e);
+  }
+}
+
 // ---- Load & Send Subtitles ----
 function loadAndSendSubtitles() {
   subtitles = [];
   subtitleFile = null;
+  currentIndex = -1;
   stopSync();
 
+  // Priority 1: auto-scan by filename (most reliable for local files)
+  console.log('[SubtitleBrowser] Starting auto-scan');
+  if (autoScanAndLoad()) {
+    return;  // Found matching subtitle
+  }
+
+  // Priority 2: fall back to IINA's selected subtitle track
+  console.log('[SubtitleBrowser] Auto-scan not found, trying selected track');
   const track = getSelectedSubtitleTrack();
   if (track) {
-    // IINA already has a subtitle track selected
     if (!track.external || !track['external-filename']) {
       console.log('[SubtitleBrowser] Not external subtitle');
       sidebar.postMessage('subtitles', { entries: [], error: '暂不支持内嵌字幕，请使用外挂字幕 (.srt/.ass/.vtt)' });
@@ -137,9 +169,8 @@ function loadAndSendSubtitles() {
     return;
   }
 
-  // No subtitle track selected — try auto-scan
-  console.log('[SubtitleBrowser] No subtitle track, trying auto-scan');
-  autoScanAndLoad();
+  // Nothing found
+  sidebar.postMessage('subtitles', { entries: [], error: '未找到匹配的字幕文件' });
 }
 
 function readAndDisplaySubtitle(filepath) {
@@ -168,7 +199,7 @@ function autoScanAndLoad() {
   if (!mediaPath) {
     // Dump debug info
     logDebugInfo();
-    return;
+    return false;
   }
 
   // Skip auto-scan for network streams
@@ -177,14 +208,14 @@ function autoScanAndLoad() {
       mediaPath.startsWith('rtmp://') ||
       mediaPath.startsWith('rtsp://')) {
     sidebar.postMessage('subtitles', { entries: [], error: '不支持网络串流 (auto-scan)' });
-    return;
+    return false;
   }
 
-  // Get directory and basename
+  // Get directory ad basename
   const sepIdx = Math.max(mediaPath.lastIndexOf('/'), mediaPath.lastIndexOf('\\'));
-  if (sepIdx === -1) {
+    if (sepIdx === -1) {
     sidebar.postMessage('subtitles', { entries: [], error: '路径异常: ' + mediaPath.substring(0, 60) });
-    return;
+    return false;
   }
   const dirPath = mediaPath.substring(0, sepIdx);
   const filename = mediaPath.substring(sepIdx + 1);
@@ -195,35 +226,32 @@ function autoScanAndLoad() {
   for (const ext of SUB_EXTENSIONS) {
     const candidatePath = dirPath + '/' + nameWithoutExt + ext;
     if (file.exists(candidatePath)) {
-      console.log('[SubtitleBrowser] Auto-loading: ' + candidatePath);
+      console.log('[SubtileBrowser] Auto-loading: ' + candidatePath);
 
-      // Load subtitle via mpv command
+      // Load subtile via mpv command
       try {
         mpv.command('sub-add', [candidatePath]);
       } catch (e) {
-        console.log('[SubtitleBrowser] sub-add error: ' + e);
+        console.log('[SubtileBrowser] sub-add error: ' + e);
         sidebar.postMessage('subtitles', { entries: [], error: '加载失败: ' + (e.message || e) });
-        return;
+        return false;
       }
 
       // Give mpv a moment to register the track, then read & parse
       setTimeout(() => {
         readAndDisplaySubtitle(candidatePath);
       }, 300);
-      return;
+      return true;
     }
   }
 
-  // Not found — show what we looked for
-  sidebar.postMessage('subtitles', {
-    entries: [],
-    error: '未找到: ' + nameWithoutExt + '(.srt|.ass|.vtt) — 文件: ' + filename
-  });
+  // Not found
+  return false;
 }
 
 function getMediaFilePath() {
   // Try multiple mpv properties in order of reliability
-  const props = ['file-path', 'path', 'filename'];
+  const props = ['path', 'file-path', 'filename'];
   for (const prop of props) {
     try {
       let val;
@@ -252,7 +280,7 @@ function getMediaFilePath() {
 
 function logDebugInfo() {
   const info = [];
-  const props = ['file-path', 'path', 'filename', 'working-directory', 'media-title'];
+  const props = ['path', 'file-path', 'filename', 'working-directory', 'media-title'];
   for (const prop of props) {
     try {
       const val = mpv.getString(prop);
@@ -316,11 +344,6 @@ event.on('iina.window-loaded', () => {
 event.on('mpv.file-loaded', () => {
   console.log('[SubtitleBrowser] mpv.file-loaded');
   setTimeout(() => { loadAndSendSubtitles(); }, 800);
-});
-
-event.on('iina.file-loaded', () => {
-  console.log('[SubtitleBrowser] iina.file-loaded');
-  setTimeout(() => { loadAndSendSubtitles(); }, 1000);
 });
 
 console.log('[SubtitleBrowser] Plugin initialized');
